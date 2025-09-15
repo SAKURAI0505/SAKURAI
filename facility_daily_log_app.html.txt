@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>インタラクティブ施設日誌</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Inter', 'Noto Sans JP', sans-serif; }
+        .chart-container { position: relative; width: 100%; max-width: 400px; margin-left: auto; margin-right: auto; height: 300px; max-height: 350px; }
+        .tab-button { transition: all 0.3s; }
+        .tab-button.active { border-color: #f59e0b; color: #f59e0b; background-color: #fffbeb; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        input, select { transition: border-color 0.3s; }
+        input:focus, select:focus { border-color: #f59e0b; outline: none; ring: 0; }
+        .btn { transition: background-color 0.3s; }
+
+        @media print {
+            body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .no-print { display: none !important; }
+            .print-container {
+                display: block !important;
+                box-shadow: none !important;
+                border: none !important;
+                padding: 0 !important;
+            }
+            main, .container { padding: 0 !important; margin: 0 !important; max-width: 100%; }
+            header { justify-content: space-between !important; }
+            .tab-content { display: block !important; }
+            section, .tab-content { page-break-inside: avoid; }
+            #dashboard-summary, #charts-section {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 1rem;
+            }
+            #dashboard-summary > div { flex: 1 1 150px; }
+            #charts-section > div { flex: 1 1 300px; page-break-inside: avoid; }
+            .chart-container { max-width: 350px; height: 250px; }
+            #tab-content-residents {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 1rem;
+            }
+            #staff-print-view { display: block !important; }
+            .print-only { display: block !important; }
+            h1 { font-size: 24px; }
+            h3, h4 { margin-top: 1.5rem; }
+        }
+    </style>
+    <!-- Chosen Palette: Warm Neutral (Slate & Amber) -->
+    <!-- Application Structure Plan: A dashboard-style SPA with a new 'Roster Management' tab. This addresses information security by removing hardcoded personal data. Data is now managed by the user and stored in the browser's localStorage. This makes the app a secure template, as the HTML file itself contains no sensitive information. The core dashboard and tab structure remains for efficient daily use, but the data source is now dynamic and local to the user's device. -->
+    <!-- Visualization & Content Choices: The core visualization strategy is unchanged. The significant change is in data handling:
+    - Master Rosters (Residents/Staff): Goal: Securely Organize/Manage. Method: A new 'Roster Management' tab with forms and tables. Interaction: Users can Add/Delete entries. Data is persisted in localStorage, not in the file. Justification: Critical for preventing information leakage. The app becomes a secure, reusable template. Method: Vanilla JS DOM manipulation + localStorage API.
+    - All other elements are retained but now draw their data from the dynamic, locally-stored rosters, ensuring the app remains fully functional while being secure. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+    <div class="container mx-auto p-4 md:p-6">
+        
+        <header class="flex flex-col md:flex-row justify-between items-center mb-6">
+            <h1 class="text-3xl font-bold text-slate-700 mb-4 md:mb-0">施設日誌</h1>
+            <div class="flex items-center gap-4">
+                 <div class="flex items-center gap-4 bg-white p-3 rounded-lg shadow-sm">
+                    <input type="date" id="log-date" class="border-slate-300 rounded-md focus:ring-amber-500 focus:border-amber-500 no-print">
+                     <span id="log-date-print" class="hidden print:inline-block text-lg font-semibold"></span>
+                    <div id="log-day" class="text-lg font-semibold text-slate-600 w-16 text-center"></div>
+                </div>
+                 <button id="print-button" class="btn bg-slate-600 text-white px-4 py-2 rounded-md hover:bg-slate-700 no-print">印刷</button>
+            </div>
+        </header>
+
+        <main>
+            <!-- Dashboard Summary -->
+            <section id="dashboard-summary" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                <div class="bg-white p-4 rounded-lg shadow-sm text-center">
+                    <h3 class="text-sm font-semibold text-slate-500">在籍数</h3>
+                    <p id="total-residents" class="text-4xl font-bold text-sky-600">0</p>
+                    <p id="total-gender" class="text-xs text-slate-400">男: 0 / 女: 0</p>
+                </div>
+                <div class="bg-white p-4 rounded-lg shadow-sm text-center">
+                    <h3 class="text-sm font-semibold text-slate-500">現入居者数</h3>
+                    <p id="current-residents" class="text-4xl font-bold text-emerald-600">0</p>
+                    <p id="current-gender" class="text-xs text-slate-400">男: 0 / 女: 0</p>
+                </div>
+                 <div class="bg-white p-4 rounded-lg shadow-sm text-center">
+                    <h3 class="text-sm font-semibold text-slate-500">入院者</h3>
+                    <p id="hospitalized-count" class="text-4xl font-bold text-amber-600">0</p>
+                </div>
+                <div class="bg-white p-4 rounded-lg shadow-sm text-center">
+                    <h3 class="text-sm font-semibold text-slate-500">外泊者</h3>
+                    <p id="away-count" class="text-4xl font-bold text-indigo-600">0</p>
+                </div>
+            </section>
+
+            <section id="charts-section" class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                <div class="bg-white p-4 rounded-lg shadow-sm">
+                    <h3 class="text-lg font-semibold mb-2 text-center text-slate-600">利用者状況</h3>
+                    <div class="chart-container">
+                        <canvas id="residentStatusChart"></canvas>
+                    </div>
+                </div>
+                <div class="bg-white p-4 rounded-lg shadow-sm">
+                     <h3 class="text-lg font-semibold mb-2 text-center text-slate-600">現入居者 男女比</h3>
+                    <div class="chart-container">
+                        <canvas id="genderRatioChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+
+            <!-- Data Entry Sections -->
+            <div class="bg-white p-4 md:p-6 rounded-lg shadow-sm print-container">
+                <div class="border-b border-slate-200 mb-4 no-print">
+                    <nav class="flex flex-wrap -mb-px" id="tab-buttons">
+                        <button data-tab="residents" class="tab-button active text-sm md:text-base border-b-2 font-medium px-4 py-3">利用者状況</button>
+                        <button data-tab="staff" class="tab-button text-sm md:text-base border-b-2 font-medium px-4 py-3">職員体制</button>
+                        <button data-tab="log" class="tab-button text-sm md:text-base border-b-2 font-medium px-4 py-3">連絡事項</button>
+                        <button data-tab="roster" class="tab-button text-sm md:text-base border-b-2 font-medium px-4 py-3">名簿管理</button>
+                    </nav>
+                </div>
+
+                <div id="tab-contents">
+                    <!-- Resident Status Tab -->
+                    <div id="tab-content-residents" class="tab-content active">
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            <!-- Hospitalized -->
+                            <div id="hospitalized-section">
+                                <h4 class="font-bold mb-2">③ 入院者</h4>
+                                <div class="flex gap-2 mb-2 no-print">
+                                    <select id="hospitalized-select" class="w-full border-slate-300 rounded-md"></select>
+                                    <button onclick="addListItem('hospitalized')" class="btn bg-amber-500 text-white px-3 rounded-md hover:bg-amber-600">追加</button>
+                                </div>
+                                <ul id="hospitalized-list" class="list-disc pl-5 text-slate-700 space-y-1"></ul>
+                            </div>
+                            <!-- Away Overnight -->
+                            <div id="away-section">
+                                <h4 class="font-bold mb-2">④ 外泊者</h4>
+                                <div class="flex gap-2 mb-2 no-print">
+                                    <select id="away-select" class="w-full border-slate-300 rounded-md"></select>
+                                    <button onclick="addListItem('away')" class="btn bg-indigo-500 text-white px-3 rounded-md hover:bg-indigo-600">追加</button>
+                                </div>
+                                <ul id="away-list" class="list-disc pl-5 text-slate-700 space-y-1"></ul>
+                            </div>
+                            <!-- Trial Stays -->
+                            <div>
+                                <h4 class="font-bold mb-2">⑤ 体験・宿泊</h4>
+                                <div class="flex gap-2 mb-2 no-print">
+                                    <input type="text" id="trial-name" placeholder="氏名" class="w-full border-slate-300 rounded-md">
+                                    <button onclick="addListItem('trial')" class="btn bg-cyan-500 text-white px-3 rounded-md hover:bg-cyan-600">追加</button>
+                                </div>
+                                <ul id="trial-list" class="list-disc pl-5 text-slate-700 space-y-1"></ul>
+                            </div>
+                             <!-- Mobility -->
+                            <div>
+                                <h4 class="font-bold mb-2">⑦ 独歩・護送・担送</h4>
+                                <div class="space-y-2">
+                                    <div class="flex items-center justify-between"><label>独歩</label><input id="mobility-walk" type="number" min="0" class="w-20 border-slate-300 rounded-md text-center"></div>
+                                    <div class="flex items-center justify-between"><label>護送</label><input id="mobility-assist" type="number" min="0" class="w-20 border-slate-300 rounded-md text-center"></div>
+                                    <div class="flex items-center justify-between"><label>担送</label><input id="mobility-carry" type="number" min="0" class="w-20 border-slate-300 rounded-md text-center"></div>
+                                </div>
+                            </div>
+                             <!-- Visitors -->
+                            <div>
+                                <h4 class="font-bold mb-2">⑧ 面会者</h4>
+                                <div class="flex gap-2 mb-2 no-print">
+                                    <input type="text" id="visitor-name" placeholder="氏名" class="w-full border-slate-300 rounded-md">
+                                    <button onclick="addListItem('visitor')" class="btn bg-slate-500 text-white px-3 rounded-md hover:bg-slate-600">追加</button>
+                                </div>
+                                <ul id="visitor-list" class="list-disc pl-5 text-slate-700 space-y-1"></ul>
+                            </div>
+                            <!-- Appointments -->
+                            <div>
+                                <h4 class="font-bold mb-2">⑨ 受診者</h4>
+                                <div class="flex gap-2 mb-2 no-print">
+                                     <select id="appointment-select" class="w-full border-slate-300 rounded-md"></select>
+                                    <button onclick="addListItem('appointment')" class="btn bg-slate-500 text-white px-3 rounded-md hover:bg-slate-600">追加</button>
+                                </div>
+                                <ul id="appointment-list" class="list-disc pl-5 text-slate-700 space-y-1"></ul>
+                            </div>
+                            <!-- Outings -->
+                            <div>
+                                <h4 class="font-bold mb-2">⑩ 外出者</h4>
+                                <div class="flex gap-2 mb-2 no-print">
+                                    <select id="outing-select" class="w-full border-slate-300 rounded-md"></select>
+                                    <button onclick="addListItem('outing')" class="btn bg-slate-500 text-white px-3 rounded-md hover:bg-slate-600">追加</button>
+                                </div>
+                                <ul id="outing-list" class="list-disc pl-5 text-slate-700 space-y-1"></ul>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Staff Tab -->
+                    <div id="tab-content-staff" class="tab-content">
+                        <h4 class="font-bold mb-4 text-lg">⑪ 出勤者</h4>
+                        <div id="staff-select-view" class="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl no-print">
+                            <div class="grid grid-cols-[100px_1fr] items-center gap-2">
+                                <label for="staff-early1" class="font-semibold">早番①</label>
+                                <select id="staff-early1" class="w-full border-slate-300 rounded-md"></select>
+                            </div>
+                            <div class="grid grid-cols-[100px_1fr] items-center gap-2">
+                                <label for="staff-early2" class="font-semibold">早番②</label>
+                                <select id="staff-early2" class="w-full border-slate-300 rounded-md"></select>
+                            </div>
+                            <div class="grid grid-cols-[100px_1fr] items-center gap-2">
+                                <label for="staff-early3" class="font-semibold">早番③</label>
+                                <select id="staff-early3" class="w-full border-slate-300 rounded-md"></select>
+                            </div>
+                            <div class="grid grid-cols-[100px_1fr] items-center gap-2">
+                                <label for="staff-day" class="font-semibold">日勤</label>
+                                <select id="staff-day" class="w-full border-slate-300 rounded-md"></select>
+                            </div>
+                            <div class="grid grid-cols-[100px_1fr] items-center gap-2">
+                                <label for="staff-late" class="font-semibold">遅番</label>
+                                <select id="staff-late" class="w-full border-slate-300 rounded-md"></select>
+                            </div>
+                            <div class="grid grid-cols-[100px_1fr] items-center gap-2">
+                                <label for="staff-night" class="font-semibold">夜勤</label>
+                                <select id="staff-night" class="w-full border-slate-300 rounded-md"></select>
+                            </div>
+                             <div class="grid grid-cols-[100px_1fr] items-center gap-2">
+                                <label for="staff-standby" class="font-semibold">待機</label>
+                                <select id="staff-standby" class="w-full border-slate-300 rounded-md"></select>
+                            </div>
+                        </div>
+                        <div id="staff-print-view" class="hidden"></div>
+                    </div>
+                    <!-- Log Tab -->
+                    <div id="tab-content-log" class="tab-content">
+                        <h4 class="font-bold mb-4 text-lg">⑫ 連絡事項</h4>
+                        <div class="grid grid-cols-1 md:grid-cols-[1fr_2fr_auto] gap-2 mb-4 items-end no-print">
+                            <div class="flex flex-col">
+                                <label for="log-resident-select" class="text-sm mb-1">入居者氏名</label>
+                                <select id="log-resident-select" class="w-full border-slate-300 rounded-md"></select>
+                            </div>
+                             <div class="flex flex-col">
+                                <label for="log-message" class="text-sm mb-1">連絡事項</label>
+                                <input type="text" id="log-message" placeholder="連絡事項を入力" class="w-full border-slate-300 rounded-md">
+                            </div>
+                            <button onclick="addCommunicationLog()" class="btn bg-emerald-500 text-white px-4 py-2 rounded-md hover:bg-emerald-600 h-10">記録追加</button>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead class="bg-slate-100">
+                                    <tr>
+                                        <th class="p-2 border-b">居室番号</th>
+                                        <th class="p-2 border-b">入居者氏名</th>
+                                        <th class="p-2 border-b">連絡事項</th>
+                                        <th class="p-2 border-b w-10 no-print"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="log-table-body">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <!-- Roster Management Tab -->
+                    <div id="tab-content-roster" class="tab-content">
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                            <div>
+                                <h3 class="font-bold text-lg mb-3">入居者名簿</h3>
+                                <div class="bg-slate-50 p-3 rounded-md mb-4 grid grid-cols-1 md:grid-cols-[1fr_auto_auto_auto] gap-2 items-end">
+                                    <input type="text" id="new-resident-name" placeholder="氏名" class="border-slate-300 rounded-md">
+                                    <select id="new-resident-gender" class="border-slate-300 rounded-md">
+                                        <option value="male">男性</option>
+                                        <option value="female">女性</option>
+                                    </select>
+                                    <input type="text" id="new-resident-room" placeholder="居室" class="w-20 border-slate-300 rounded-md">
+                                    <button onclick="addResident()" class="btn bg-sky-500 text-white px-4 py-2 rounded-md hover:bg-sky-600 h-10">追加</button>
+                                </div>
+                                <div class="overflow-x-auto">
+                                    <table class="w-full text-left">
+                                        <thead class="bg-slate-100"><tr><th class="p-2">氏名</th><th class="p-2">性別</th><th class="p-2">居室</th><th class="w-10 p-2"></th></tr></thead>
+                                        <tbody id="resident-roster-table"></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                             <div>
+                                <h3 class="font-bold text-lg mb-3">職員名簿</h3>
+                                <div class="bg-slate-50 p-3 rounded-md mb-4 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 items-end">
+                                    <input type="text" id="new-staff-name" placeholder="氏名" class="border-slate-300 rounded-md">
+                                    <button onclick="addStaff()" class="btn bg-sky-500 text-white px-4 py-2 rounded-md hover:bg-sky-600 h-10">追加</button>
+                                </div>
+                                <div class="overflow-x-auto">
+                                    <table class="w-full text-left">
+                                        <thead class="bg-slate-100"><tr><th class="p-2">氏名</th><th class="w-10 p-2"></th></tr></thead>
+                                        <tbody id="staff-roster-table"></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            
+            let residents = [];
+            let staff = [];
+            
+            let dailyLog = {
+                hospitalized: [],
+                away: [],
+                trial: [],
+                visitor: [],
+                appointment: [],
+                outing: [],
+                communications: [],
+            };
+
+            let residentStatusChart, genderRatioChart;
+
+            function initialize() {
+                loadRosters();
+                setupDate();
+                populateSelects();
+                setupTabs();
+                updateDashboard();
+                setupEventListeners();
+                renderRosters();
+            }
+
+            function loadRosters() {
+                const storedResidents = localStorage.getItem('facilityResidents');
+                if (storedResidents) {
+                    residents = JSON.parse(storedResidents);
+                }
+                const storedStaff = localStorage.getItem('facilityStaff');
+                if (storedStaff) {
+                    staff = JSON.parse(storedStaff);
+                }
+            }
+
+            function saveRosters() {
+                localStorage.setItem('facilityResidents', JSON.stringify(residents));
+                localStorage.setItem('facilityStaff', JSON.stringify(staff));
+            }
+            
+            function renderRosters() {
+                const residentTable = document.getElementById('resident-roster-table');
+                residentTable.innerHTML = '';
+                residents.forEach(r => {
+                    const row = residentTable.insertRow();
+                    row.innerHTML = `
+                        <td class="p-2 border-b border-slate-200">${r.name}</td>
+                        <td class="p-2 border-b border-slate-200">${r.gender === 'male' ? '男性' : '女性'}</td>
+                        <td class="p-2 border-b border-slate-200">${r.room}</td>
+                        <td class="p-2 border-b border-slate-200"><button class="text-red-500" onclick="deleteResident(${r.id})">&times;</button></td>
+                    `;
+                });
+
+                const staffTable = document.getElementById('staff-roster-table');
+                staffTable.innerHTML = '';
+                staff.forEach(s => {
+                    const row = staffTable.insertRow();
+                    row.innerHTML = `
+                        <td class="p-2 border-b border-slate-200">${s.name}</td>
+                        <td class="p-2 border-b border-slate-200"><button class="text-red-500" onclick="deleteStaff(${s.id})">&times;</button></td>
+                    `;
+                });
+            }
+
+            window.addResident = () => {
+                const nameInput = document.getElementById('new-resident-name');
+                const genderSelect = document.getElementById('new-resident-gender');
+                const roomInput = document.getElementById('new-resident-room');
+                const name = nameInput.value.trim();
+                const room = roomInput.value.trim();
+
+                if (!name || !room) {
+                    alert('氏名と居室番号を入力してください。');
+                    return;
+                }
+
+                residents.push({
+                    id: Date.now(),
+                    name: name,
+                    gender: genderSelect.value,
+                    room: room
+                });
+
+                nameInput.value = '';
+                roomInput.value = '';
+                
+                saveRosters();
+                renderRosters();
+                populateSelects();
+                updateDashboard();
+            };
+            
+            window.deleteResident = (id) => {
+                if (confirm('この入居者を名簿から削除しますか？')) {
+                    residents = residents.filter(r => r.id !== id);
+                    saveRosters();
+                    renderRosters();
+                    populateSelects();
+                    updateDashboard();
+                }
+            };
+            
+            window.addStaff = () => {
+                const nameInput = document.getElementById('new-staff-name');
+                const name = nameInput.value.trim();
+                if (!name) {
+                    alert('氏名を入力してください。');
+                    return;
+                }
+                staff.push({ id: Date.now(), name: name });
+                nameInput.value = '';
+                saveRosters();
+                renderRosters();
+                populateSelects();
+            };
+
+            window.deleteStaff = (id) => {
+                if (confirm('この職員を名簿から削除しますか？')) {
+                    staff = staff.filter(s => s.id !== id);
+                    saveRosters();
+                    renderRosters();
+                    populateSelects();
+                }
+            };
+
+
+            function setupDate() {
+                const dateInput = document.getElementById('log-date');
+                const dayDisplay = document.getElementById('log-day');
+                const today = new Date();
+                const yyyy = today.getFullYear();
+                const mm = String(today.getMonth() + 1).padStart(2, '0');
+                const dd = String(today.getDate()).padStart(2, '0');
+                dateInput.value = `${yyyy}-${mm}-${dd}`;
+                
+                const days = ['日', '月', '火', '水', '木', '金', '土'];
+                
+                const updatePrintDate = (dateStr) => {
+                     const date = new Date(dateStr);
+                     const y = date.getUTCFullYear();
+                     const m = date.getUTCMonth() + 1;
+                     const d = date.getUTCDate();
+                     const dayIndex = date.getUTCDay();
+                     document.getElementById('log-date-print').textContent = `${y}年${m}月${d}日`;
+                     dayDisplay.textContent = `${days[dayIndex]}曜日`;
+                };
+
+                dateInput.addEventListener('change', (e) => updatePrintDate(e.target.value));
+                updatePrintDate(dateInput.value); // Initial set
+            }
+
+            function populateSelects() {
+                const residentOptions = residents.length > 0 ? residents.map(r => `<option value="${r.id}">${r.name}</option>`).join('') : '<option value="">名簿に登録してください</option>';
+                const staffOptions = staff.length > 0 ? `<option value="">未選択</option>` + staff.map(s => `<option value="${s.id}">${s.name}</option>`).join('') : '<option value="">名簿に登録してください</option>';
+
+                ['hospitalized-select', 'away-select', 'appointment-select', 'outing-select', 'log-resident-select'].forEach(id => {
+                    document.getElementById(id).innerHTML = residentOptions;
+                });
+                
+                ['staff-early1', 'staff-early2', 'staff-early3', 'staff-day', 'staff-late', 'staff-night', 'staff-standby'].forEach(id => {
+                    document.getElementById(id).innerHTML = staffOptions;
+                });
+            }
+
+            function setupTabs() {
+                const tabButtons = document.getElementById('tab-buttons');
+                const tabContents = document.getElementById('tab-contents');
+                tabButtons.addEventListener('click', (e) => {
+                    if (e.target.tagName === 'BUTTON') {
+                        const tab = e.target.dataset.tab;
+                        
+                        tabButtons.querySelectorAll('button').forEach(btn => btn.classList.remove('active'));
+                        e.target.classList.add('active');
+
+                        tabContents.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+                        document.getElementById(`tab-content-${tab}`).classList.add('active');
+                    }
+                });
+            }
+            
+            function setupEventListeners() {
+                 document.getElementById('hospitalized-section').addEventListener('click', (e) => {
+                    if (e.target.dataset.action === 'remove' && e.target.dataset.type === 'hospitalized') {
+                        removeListItem('hospitalized', parseInt(e.target.dataset.id));
+                    }
+                });
+                 document.getElementById('away-section').addEventListener('click', (e) => {
+                    if (e.target.dataset.action === 'remove' && e.target.dataset.type === 'away') {
+                        removeListItem('away', parseInt(e.target.dataset.id));
+                    }
+                });
+                document.getElementById('print-button').addEventListener('click', () => {
+                    prepareForPrint();
+                    window.print();
+                });
+            }
+            
+            function prepareForPrint() {
+                // Populate staff list for printing
+                const staffPrintView = document.getElementById('staff-print-view');
+                const staffShifts = [
+                    { id: 'staff-early1', label: '早番①' }, { id: 'staff-early2', label: '早番②' },
+                    { id: 'staff-early3', label: '早番③' }, { id: 'staff-day', label: '日勤' },
+                    { id: 'staff-late', label: '遅番' }, { id: 'staff-night', label: '夜勤' },
+                    { id: 'staff-standby', label: '待機' }
+                ];
+                let staffHtml = '<dl class="grid grid-cols-2 gap-x-8 gap-y-1">';
+                staffShifts.forEach(shift => {
+                    const selectEl = document.getElementById(shift.id);
+                    const selectedOption = selectEl.options[selectEl.selectedIndex];
+                    const staffName = selectedOption && selectedOption.value ? selectedOption.text : '未選択';
+                    staffHtml += `<div class="flex"><dt class="font-semibold w-20">${shift.label}:</dt><dd>${staffName}</dd></div>`;
+                });
+                staffHtml += '</dl>';
+                staffPrintView.innerHTML = staffHtml;
+
+                // Populate mobility numbers for printing
+                document.getElementById('mobility-walk').setAttribute('value', document.getElementById('mobility-walk').value);
+                document.getElementById('mobility-assist').setAttribute('value', document.getElementById('mobility-assist').value);
+                document.getElementById('mobility-carry').setAttribute('value', document.getElementById('mobility-carry').value);
+            }
+
+            function updateDashboard() {
+                const total = residents.length;
+                const totalMale = residents.filter(r => r.gender === 'male').length;
+                const totalFemale = total - totalMale;
+
+                const hospitalizedIds = new Set(dailyLog.hospitalized.map(r => r.id));
+                const awayIds = new Set(dailyLog.away.map(r => r.id));
+
+                const currentList = residents.filter(r => !hospitalizedIds.has(r.id) && !awayIds.has(r.id));
+                const current = currentList.length;
+                const currentMale = currentList.filter(r => r.gender === 'male').length;
+                const currentFemale = current - currentMale;
+                
+                document.getElementById('total-residents').textContent = total;
+                document.getElementById('total-gender').textContent = `男: ${totalMale} / 女: ${totalFemale}`;
+                document.getElementById('current-residents').textContent = current;
+                document.getElementById('current-gender').textContent = `男: ${currentMale} / 女: ${currentFemale}`;
+                document.getElementById('hospitalized-count').textContent = dailyLog.hospitalized.length;
+                document.getElementById('away-count').textContent = dailyLog.away.length;
+
+                updateCharts(current, dailyLog.hospitalized.length, dailyLog.away.length, currentMale, currentFemale);
+            }
+
+            function createCharts() {
+                const statusCtx = document.getElementById('residentStatusChart').getContext('2d');
+                residentStatusChart = new Chart(statusCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: ['現入居', '入院', '外泊'],
+                        datasets: [{
+                            label: '人数',
+                            data: [0, 0, 0],
+                            backgroundColor: ['#10b981', '#f59e0b', '#6366f1'],
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: { y: { beginAtZero: true } }
+                    }
+                });
+
+                const genderCtx = document.getElementById('genderRatioChart').getContext('2d');
+                genderRatioChart = new Chart(genderCtx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['男性', '女性'],
+                        datasets: [{
+                            data: [0, 0],
+                            backgroundColor: ['#3b82f6', '#ec4899'],
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { position: 'top' },
+                            tooltip: { callbacks: { label: (context) => `${context.label}: ${context.raw}人` } }
+                        }
+                    }
+                });
+            }
+            
+            function updateCharts(current, hospitalized, away, male, female) {
+                if (!residentStatusChart) { createCharts(); }
+                const maxVal = residents.length > 0 ? residents.length : 10;
+                residentStatusChart.options.scales.y.suggestedMax = maxVal;
+                residentStatusChart.data.datasets[0].data = [current, hospitalized, away];
+                residentStatusChart.update();
+                genderRatioChart.data.datasets[0].data = [male, female];
+                genderRatioChart.update();
+            }
+            
+            window.addListItem = (type) => {
+                 let inputEl, newItem;
+                if(type === 'hospitalized' || type === 'away' || type === 'appointment' || type === 'outing') {
+                    if (residents.length === 0) return;
+                    inputEl = document.getElementById(`${type}-select`);
+                    const residentId = parseInt(inputEl.value);
+                    if (dailyLog[type].some(item => item.id === residentId)) return;
+                    newItem = residents.find(r => r.id === residentId);
+                } else {
+                    inputEl = document.getElementById(`${type}-name`);
+                    if (!inputEl.value.trim()) return;
+                    newItem = { name: inputEl.value.trim() };
+                }
+                
+                if (newItem) {
+                    dailyLog[type].push(newItem);
+                    if(inputEl.tagName === 'INPUT') inputEl.value = '';
+                    renderList(type);
+                    updateDashboard();
+                }
+            };
+            
+             window.removeListItem = (type, id) => {
+                 dailyLog[type] = dailyLog[type].filter(item => item.id !== id);
+                 renderList(type);
+                 updateDashboard();
+            };
+
+            function renderList(type) {
+                const listEl = document.getElementById(`${type}-list`);
+                listEl.innerHTML = '';
+                dailyLog[type].forEach((item) => {
+                    const li = document.createElement('li');
+                    li.className = 'flex justify-between items-center';
+                    li.textContent = item.name;
+                    if(item.id) {
+                         const removeBtn = document.createElement('button');
+                         removeBtn.innerHTML = '&times;';
+                         removeBtn.className = 'text-red-500 font-bold ml-2 no-print';
+                         removeBtn.dataset.action = 'remove';
+                         removeBtn.dataset.type = type;
+                         removeBtn.dataset.id = item.id;
+                         li.appendChild(removeBtn);
+                    }
+                    listEl.appendChild(li);
+                });
+            }
+
+            window.addCommunicationLog = () => {
+                if (residents.length === 0) return;
+                const residentSelect = document.getElementById('log-resident-select');
+                const messageInput = document.getElementById('log-message');
+                const residentId = parseInt(residentSelect.value);
+                const message = messageInput.value.trim();
+
+                if (!message) return;
+
+                const resident = residents.find(r => r.id === residentId);
+                dailyLog.communications.push({
+                    residentId: resident.id,
+                    residentName: resident.name,
+                    room: resident.room,
+                    message: message
+                });
+                
+                messageInput.value = '';
+                renderCommunicationLog();
+            };
+            
+            function renderCommunicationLog() {
+                const tableBody = document.getElementById('log-table-body');
+                tableBody.innerHTML = '';
+                dailyLog.communications.forEach((log, index) => {
+                    const row = tableBody.insertRow();
+                    row.innerHTML = `
+                        <td class="p-2 border-b border-slate-200">${log.room}</td>
+                        <td class="p-2 border-b border-slate-200">${log.residentName}</td>
+                        <td class="p-2 border-b border-slate-200">${log.message}</td>
+                        <td class="p-2 border-b border-slate-200 no-print"><button class="text-red-500" onclick="removeCommunicationLog(${index})">&times;</button></td>
+                    `;
+                });
+            }
+
+            window.removeCommunicationLog = (index) => {
+                dailyLog.communications.splice(index, 1);
+                renderCommunicationLog();
+            };
+
+            initialize();
+        });
+    </script>
+</body>
+</html>
+
